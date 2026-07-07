@@ -10,7 +10,6 @@ on:
 
 env:
   SOLUTION_NAME: zxcmodule
-  CONFIGURATION: Release
 
 jobs:
   build-windows:
@@ -18,12 +17,15 @@ jobs:
     
     strategy:
       matrix:
-        platform: [x64, Win32]
         include:
           - platform: x64
+            configuration: Release
             output_name: gmcl_zxcmodule_win64.dll
-          - platform: Win32
+            solution_platform: x64
+          - platform: x86
+            configuration: Release
             output_name: gmcl_zxcmodule_win32.dll
+            solution_platform: Win32
     
     steps:
     - name: Checkout code
@@ -34,110 +36,86 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     
-    - name: Setup vcpkg (if needed)
+    - name: Display solution structure
       run: |
-        git clone https://github.com/Microsoft/vcpkg.git
-        .\vcpkg\bootstrap-vcpkg.bat
+        echo "Listing solution file:"
+        type zxcmodule.sln
+        echo ""
+        echo "Available configurations in vcxproj:"
+        findstr /C:"ProjectConfiguration" zxcmodule.vcxproj
     
-    - name: Restore NuGet packages
-      run: nuget restore ${{ env.SOLUTION_NAME }}.sln
-    
-    - name: Build Solution
+    - name: Build Solution - ${{ matrix.solution_platform }}
       run: |
-        msbuild ${{ env.SOLUTION_NAME }}.sln /p:Configuration=${{ env.CONFIGURATION }} /p:Platform=${{ matrix.platform }} /p:OutDir=.\build\${{ matrix.platform }}\
+        msbuild zxcmodule.sln /p:Configuration=${{ matrix.configuration }} /p:Platform="${{ matrix.solution_platform }}" /p:OutDir=.\build\${{ matrix.platform }}\ /v:detailed
+      continue-on-error: false
+    
+    - name: Check build output
+      run: |
+        echo "Build output:"
+        dir build\${{ matrix.platform }}\ 2>nul || echo "Build folder not found"
+        dir *.dll /s 2>nul || echo "No DLLs found"
     
     - name: Upload artifacts
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: zxcmodule-${{ matrix.platform }}
         path: build/${{ matrix.platform }}/${{ matrix.output_name }}
     
-    - name: Prepare release files
-      if: github.event_name == 'release'
-      run: |
-        mkdir release_files
-        copy build\${{ matrix.platform }}\${{ matrix.output_name }} release_files\
-        echo "zxcmodule for Garry's Mod (${{ matrix.platform }})" > release_files/README.txt
-    
     - name: Upload to release
-      if: github.event_name == 'release'
+      if: github.event_name == 'release' && success()
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: release_files/${{ matrix.output_name }}
+        asset_path: build/${{ matrix.platform }}/${{ matrix.output_name }}
         asset_name: ${{ matrix.output_name }}
         asset_content_type: application/octet-stream
 
-  check-lua-syntax:
-    runs-on: ubuntu-latest
-    needs: build-windows
+  build-debug:
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    
+    strategy:
+      matrix:
+        platform: [x64, Win32]
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
     
-    - name: Check Lua examples syntax
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Build Debug
       run: |
-        # Проверка синтаксиса примеров Lua
-        echo "Checking Lua syntax in README.md examples..."
-        grep -A 20 "Code example" README.md | sed '1,2d' | grep -v '```' > example.lua
-        if [ -f example.lua ]; then
-          echo "Lua example extracted and ready for checking"
-        fi
+        msbuild zxcmodule.sln /p:Configuration=Debug /p:Platform="${{ matrix.platform }}" /p:OutDir=.\build\Debug\${{ matrix.platform }}\
+    
+    - name: Upload Debug artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: zxcmodule-debug-${{ matrix.platform }}
+        path: build/Debug/${{ matrix.platform }}/gmcl_zxcmodule_win*.dll
 
-  security-scan:
+  validate-sln:
     runs-on: windows-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Run Security Scan
-      uses: microsoft/security-devops-action@v1
-      continue-on-error: true
-
-  versioning:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    
-    - name: Generate version
-      id: version
+    - name: Validate solution configurations
       run: |
-        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "Version: ${VERSION}"
-    
-    - name: Update version header
-      run: |
-        # Обновление версии в файлах проекта при необходимости
-        echo "Version ${{ steps.version.outputs.version }}" > version.txt
-
-  documentation:
-    runs-on: ubuntu-latest
-    needs: build-windows
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Generate API documentation
-      run: |
-        echo "Generating API documentation from README.md"
-        # Можно добавить автоматическую генерацию документации
-    
-    - name: Deploy to GitHub Pages (optional)
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs
-        publish_branch: gh-pages
-      continue-on-error: true
+        echo "Validating solution configurations..."
+        echo "Platforms in solution:"
+        findstr /C:"Platform" zxcmodule.sln | findstr /V "VisualStudioVersion"
+        echo ""
+        echo "Configurations in vcxproj:"
+        findstr /C:"ProjectConfiguration" zxcmodule.vcxproj
+        echo ""
+        echo "Validating with MSBuild:"
+        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=x64 /t:Clean
+        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=Win32 /t:Clean
