@@ -18,9 +18,6 @@ jobs:
           - platform: x64
             solution_platform: x64
             output_name: gmcl_zxcmodule_win64.dll
-          - platform: x86
-            solution_platform: x86
-            output_name: gmcl_zxcmodule_win32.dll
     
     steps:
     - name: Checkout code
@@ -59,7 +56,7 @@ jobs:
     
     strategy:
       matrix:
-        platform: [x64, x86]
+        platform: [x64]
     
     steps:
     - name: Checkout code
