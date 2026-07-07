@@ -1,121 +1,36 @@
-name: Build zxcmodule
+name: Diagnose Build
 
 on:
-  push:
-    branches: [ main, master, develop ]
-  pull_request:
-    branches: [ main, master ]
-  release:
-    types: [ published ]
-
-env:
-  SOLUTION_NAME: zxcmodule
+  workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    
-    strategy:
-      matrix:
-        include:
-          - platform: x64
-            configuration: Release
-            output_name: gmcl_zxcmodule_win64.dll
-            solution_platform: x64
-          - platform: x86
-            configuration: Release
-            output_name: gmcl_zxcmodule_win32.dll
-            solution_platform: Win32
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-    
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
-    
-    - name: Display solution structure
-      run: |
-        echo "Listing solution file:"
-        type zxcmodule.sln
-        echo ""
-        echo "Available configurations in vcxproj:"
-        findstr /C:"ProjectConfiguration" zxcmodule.vcxproj
-    
-    - name: Build Solution - ${{ matrix.solution_platform }}
-      run: |
-        msbuild zxcmodule.sln /p:Configuration=${{ matrix.configuration }} /p:Platform="${{ matrix.solution_platform }}" /p:OutDir=.\build\${{ matrix.platform }}\ /v:detailed
-      continue-on-error: false
-    
-    - name: Check build output
-      run: |
-        echo "Build output:"
-        dir build\${{ matrix.platform }}\ 2>nul || echo "Build folder not found"
-        dir *.dll /s 2>nul || echo "No DLLs found"
-    
-    - name: Upload artifacts
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: zxcmodule-${{ matrix.platform }}
-        path: build/${{ matrix.platform }}/${{ matrix.output_name }}
-    
-    - name: Upload to release
-      if: github.event_name == 'release' && success()
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: build/${{ matrix.platform }}/${{ matrix.output_name }}
-        asset_name: ${{ matrix.output_name }}
-        asset_content_type: application/octet-stream
-
-  build-debug:
-    runs-on: windows-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    
-    strategy:
-      matrix:
-        platform: [x64, Win32]
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-    
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
-    
-    - name: Build Debug
-      run: |
-        msbuild zxcmodule.sln /p:Configuration=Debug /p:Platform="${{ matrix.platform }}" /p:OutDir=.\build\Debug\${{ matrix.platform }}\
-    
-    - name: Upload Debug artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: zxcmodule-debug-${{ matrix.platform }}
-        path: build/Debug/${{ matrix.platform }}/gmcl_zxcmodule_win*.dll
-
-  validate-sln:
+  diagnose:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
-    - name: Validate solution configurations
+    - name: Show solution platforms
       run: |
-        echo "Validating solution configurations..."
-        echo "Platforms in solution:"
-        findstr /C:"Platform" zxcmodule.sln | findstr /V "VisualStudioVersion"
-        echo ""
-        echo "Configurations in vcxproj:"
-        findstr /C:"ProjectConfiguration" zxcmodule.vcxproj
-        echo ""
-        echo "Validating with MSBuild:"
+        echo "=== Solution platforms ==="
+        findstr /C:"SolutionConfigurationPlatforms" -A 10 zxcmodule.sln
+    
+    - name: Test build x64
+      run: |
+        echo "Testing x64 build..."
         msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=x64 /t:Clean
-        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=Win32 /t:Clean
+    
+    - name: Test build x86
+      run: |
+        echo "Testing x86 build..."
+        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=x86 /t:Clean
+    
+    - name: Test direct vcxproj x64
+      run: |
+        echo "Testing direct x64 build..."
+        msbuild zxcmodule.vcxproj /p:Configuration=Release /p:Platform=x64 /t:Clean
+    
+    - name: Test direct vcxproj Win32
+      run: |
+        echo "Testing direct Win32 build..."
+        msbuild zxcmodule.vcxproj /p:Configuration=Release /p:Platform=Win32 /t:Clean
