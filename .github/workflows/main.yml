@@ -1,36 +1,81 @@
-name: Diagnose Build
+name: Build zxcmodule
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
 
 jobs:
-  diagnose:
+  build-windows:
     runs-on: windows-latest
     
+    strategy:
+      matrix:
+        include:
+          - platform: x64
+            solution_platform: x64
+            output_name: gmcl_zxcmodule_win64.dll
+          - platform: x86
+            solution_platform: x86
+            output_name: gmcl_zxcmodule_win32.dll
+    
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
     
-    - name: Show solution platforms
-      run: |
-        echo "=== Solution platforms ==="
-        findstr /C:"SolutionConfigurationPlatforms" -A 10 zxcmodule.sln
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
     
-    - name: Test build x64
+    - name: Build Solution
       run: |
-        echo "Testing x64 build..."
-        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=x64 /t:Clean
+        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform="${{ matrix.solution_platform }}" /p:OutDir=.\build\${{ matrix.platform }}\ /v:minimal
     
-    - name: Test build x86
-      run: |
-        echo "Testing x86 build..."
-        msbuild zxcmodule.sln /p:Configuration=Release /p:Platform=x86 /t:Clean
+    - name: Upload artifacts
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: zxcmodule-${{ matrix.platform }}
+        path: build/${{ matrix.platform }}/${{ matrix.output_name }}
     
-    - name: Test direct vcxproj x64
-      run: |
-        echo "Testing direct x64 build..."
-        msbuild zxcmodule.vcxproj /p:Configuration=Release /p:Platform=x64 /t:Clean
+    - name: Upload to release
+      if: github.event_name == 'release' && success()
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: build/${{ matrix.platform }}/${{ matrix.output_name }}
+        asset_name: ${{ matrix.output_name }}
+        asset_content_type: application/octet-stream
+
+  build-debug:
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     
-    - name: Test direct vcxproj Win32
+    strategy:
+      matrix:
+        platform: [x64, x86]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Build Debug
       run: |
-        echo "Testing direct Win32 build..."
-        msbuild zxcmodule.vcxproj /p:Configuration=Release /p:Platform=Win32 /t:Clean
+        msbuild zxcmodule.sln /p:Configuration=Debug /p:Platform="${{ matrix.platform }}" /p:OutDir=.\build\Debug\${{ matrix.platform }}\
+    
+    - name: Upload Debug artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: zxcmodule-debug-${{ matrix.platform }}
+        path: build/Debug/${{ matrix.platform }}/gmcl_zxcmodule_win*.dll
